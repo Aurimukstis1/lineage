@@ -1,19 +1,15 @@
 import math
 from array import array
-
 import moderngl
 import pygame
-
 import random
-
 import moderngl_window
+import perlin_noise
 
-window_size = 1280, 720
+window_size = 1920, 1080
 res_downscale = 4
-
 tile_size = 16, 16
-
-camera_height_coef = 32
+camera_height_coef = 48
 
 def load_shader(file_path):
     with open(file_path, 'r') as file:
@@ -22,32 +18,43 @@ def load_shader(file_path):
 
 class Camera:
     def __init__(self, width, height):
-        self.offset_x = 0
-        self.offset_y = 0
-        self.width = width
-        self.height = height
+        self.offset_x   = 0
+        self.offset_y   = 0
+        self.width      = width
+        self.height     = height
+        # --- --- ---
 
     def update(self, target):
-        # Center the camera on the target
-        self.offset_x = target.x - self.width // 2
+        # centering the camera to the target (usually player)
+        self.offset_x = target.x - (self.width // 2 - 8)
         self.offset_y = target.y - self.height // 2
 
     def apply(self, entity):
-        # Apply the camera offset to an entity
+        # apply the difference between the target and whatever entity
         entity.rect.x -= self.offset_x
         entity.rect.y -= self.offset_y + camera_height_coef
 
-    def apply_parallax(self, layer, dist):
-        layer.rect.x -= self.offset_x / dist
-        layer.rect.y -= self.offset_y + camera_height_coef
+    def apply_parallax(self, layer, dist, cloud):
+        if cloud == True:
+            if dist == 6:
+                layer.rect.x -= self.offset_x // (dist*5)
+            else:
+                layer.rect.x -= self.offset_x // (dist*3)
+            layer.rect.y -= self.offset_y + camera_height_coef
+        else:
+            if dist == 6:
+                layer.rect.x -= self.offset_x // (dist*4)
+            else:
+                layer.rect.x -= self.offset_x // (dist*2)
+            layer.rect.y -= self.offset_y + camera_height_coef
 
-    def apply_group(self, group):
+    def apply_to_group(self, group):
         for entity in group:
             self.apply(entity)
 
-    def apply_parallax_group(self, group, dist):
+    def apply_to_parallax_group(self, group, dist, cloud=False):
         for layer in group:
-            self.apply_parallax(layer, dist+1)
+            self.apply_parallax(layer, dist, cloud)
 
 
 class Player(pygame.sprite.Sprite):
@@ -55,6 +62,7 @@ class Player(pygame.sprite.Sprite):
         pygame.sprite.Sprite.__init__(self)
         self.x = x
         self.y = y
+        self.coincount = 12
 
         self.image = pygame.Surface([width, height]) 
         self.image.fill(color)
@@ -67,45 +75,136 @@ class Player(pygame.sprite.Sprite):
         self.rect.x = self.x
         self.rect.y = self.y
 
+    def givecoin(self):
+        self.coincount+=1
+
+    def takecoin(self):
+        self.coincount-=1
+
+
+class Task():
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.selected = False
+
+
+class NPC():
+    # --- #
+    class NPC_builder(pygame.sprite.Sprite):
+        def __init__(self, x, y, color, height, width):
+            pygame.sprite.Sprite.__init__(self)
+            self.id = random.randrange(1000,10000)
+            self.x = x
+            self.y = y
+            self.assigned_task = None
+
+            self.image = pygame.Surface([width, height]) 
+            self.image.fill(color)
+            
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+        
+        def update(self):
+            self.rect.x = self.x
+            self.rect.y = self.y
+
+            if not self.assigned_task == None:
+                if self.assigned_task.x < self.x:
+                    self.x -= 1
+                elif self.assigned_task.x > self.x:
+                    self.x += 1
+
 
 class World():
     def __init__(self):
         self.entity_list = pygame.sprite.Group()
-        self.worldsize = 64
+        self.worldsize = 128
+        self.inertia = 0.0
         
         self.ground = Ground(0,0,self.worldsize)
-        self.ground.generate()
-
+        self.structures = Structures(0,0)
         self.background = Background(0,0,self.worldsize)
+
+        self.ground.generate()
         self.background.generate()
 
-        self.player = Player(0,16,(255,100,100),32,16)
+        self.player = Player((self.worldsize//2)*tile_size[0],16,(100,0,150),32,16)
         self.entity_list.add(self.player)
 
+        self.npc1 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(150,150,150),16,16)
+        self.entity_list.add(self.npc1)
+
+        task2 = Task(32,16)
+        self.entity_list.sprites()[1].task = task2
+        task2.selected = True
+
+        for i in self.ground.foliage:
+            if i.x >= self.structures.hub.x-128 and i.x <= self.structures.hub.x+128:
+                i.kill()
+
+        self.ground.combination_foliage = [
+            i for i in self.ground.combination_foliage 
+            if not (self.structures.hub.x - 128 <= i.x <= self.structures.hub.x + 128)
+        ]
+
         self.camera = Camera(window_size[0] // res_downscale, window_size[1] // res_downscale)
+
     
     def update(self):
         keys = pygame.key.get_pressed()
 
-        if keys[pygame.K_LEFT]:
-            self.player.x -= 1
-        if keys[pygame.K_RIGHT]:
-            self.player.x += 1
-        if keys[pygame.K_DOWN]:
-            self.player.y -= 1
-        if keys[pygame.K_UP]:
-            self.player.y += 1
+        if keys[pygame.K_LSHIFT]==False:
+            if keys[pygame.K_LEFT]:
+                if not self.inertia < -0.5:
+                    self.inertia -= 0.025
+            if keys[pygame.K_RIGHT]:
+                if not self.inertia > 0.5:
+                    self.inertia += 0.025
+        else:
+            if keys[pygame.K_LEFT]:
+                if not self.inertia < -1.0:
+                    self.inertia -= 0.05
+            if keys[pygame.K_RIGHT]:
+                if not self.inertia > 1.0:
+                    self.inertia += 0.05
+        
+        self.player.x += self.inertia
 
-        self.player.update()
+        self.inertia = self.inertia / 1.05
+
+        self.entity_list.update()
         self.ground.terrain.update()
         self.ground.under_terrain.update()
-        self.ground.grass.update()
-        self.background.flora.update()
+        self.ground.foliage.update()
+        for i in self.ground.combination_foliage[:]:
+            i.parts.update()
+        self.structures.hub.check(self.player)
+        self.structures.structure_list.update()
 
-        self.background.parallax_1.update()
-        self.background.parallax_2.update()
-        self.background.parallax_3.update()
-        self.background.parallax_4.update()
+        self.background.parallax_layer_2.update()
+        self.background.parallax_layer_3.update()
+        self.background.parallax_layer_4.update()
+        self.background.parallax_layer_5.update()
+        self.background.parallax_layer_6.update()
+
+        self.background.weather_layer_4.update()
+        self.background.weather_layer_5.update()
+        self.background.weather_layer_6.update()
+
+        for i in self.background.weather_layer_4:
+            i.x += 0.01
+            if i.x > self.worldsize*(tile_size[0]//4):
+                i.x = 0
+        for i in self.background.weather_layer_5:
+            i.x += 0.005
+            if i.x > self.worldsize*(tile_size[0]//4):
+                i.x = 0
+        for i in self.background.weather_layer_6:
+            i.x += 0.001
+            if i.x > self.worldsize*(tile_size[0]//4):
+                i.x = 0
 
         self.camera.update(self.player)
 
@@ -117,19 +216,26 @@ class Ground():
         self.length = length
         self.terrain = pygame.sprite.Group()
         self.under_terrain = pygame.sprite.Group()
-        self.grass = pygame.sprite.Group()
+
+        self.foliage = pygame.sprite.Group()
+        self.combination_foliage = []
 
     def generate(self):
-        i = 0
+        i=0
         while i < self.length:
+            indx = random.randrange(-1,2)
             tile        = Tile(tile_size[0]*i,self.y,random.randrange(1,3))
             under_tile  = Tile(tile_size[0]*i,(self.y-tile_size[1]*4)+random.randrange(0,5),random.randrange(3,5))
-            
-            grass_tuft  = Foliage(random.randrange(0,self.length*tile_size[0]),tile_size[1],random.randrange(1,3))
+            grass_tuft  = Foliage.Grass1(random.randrange(0,self.length*tile_size[0]),tile_size[1])
 
-            self.terrain.add(tile)
-            self.under_terrain.add(under_tile)
-            self.grass.add(grass_tuft)
+            if indx >= 1:
+                displacement = (i*tile_size[0])-random.randrange(-10,10)
+                tree  = Foliage.Tree1(displacement,tile_size[1])
+                self.combination_foliage.append(tree)
+                
+            self.terrain.add        (tile)
+            self.under_terrain.add  (under_tile)
+            self.foliage.add        (grass_tuft)
             i=i+1
 
 
@@ -138,30 +244,73 @@ class Background():
         self.x = x
         self.y = y
         self.length = length
-        self.flora = pygame.sprite.Group()
 
-        self.parallax_1 = pygame.sprite.Group()
-        self.parallax_2 = pygame.sprite.Group()
-        self.parallax_3 = pygame.sprite.Group()
-        self.parallax_4 = pygame.sprite.Group()
+        self.parallax_layer_2 = pygame.sprite.Group()
+        self.parallax_layer_3 = pygame.sprite.Group()
+        self.parallax_layer_4 = pygame.sprite.Group()
+        self.parallax_layer_5 = pygame.sprite.Group()
+        self.parallax_layer_6 = pygame.sprite.Group() 
+
+        self.weather_layer_4  = pygame.sprite.Group()
+        self.weather_layer_5  = pygame.sprite.Group()
+        self.weather_layer_6  = pygame.sprite.Group()
 
     def generate(self):
         i = 0
-        while i < self.length:
-            indx = int((math.sin(2 * i) + math.sin(math.pi * i))*1.2)
-            if indx > 0:
-                tree  = Foliage(i*tile_size[0],tile_size[1],3)
-                self.flora.add(tree)
 
-            parallax_tile1 = ParallaxTile(i*64,16,1)
-            parallax_tile2 = ParallaxTile(i*64,24,2)
-            parallax_tile3 = ParallaxTile(i*64,32,3)
-            parallax_tile4 = ParallaxTile(i*64,40,4)
-            self.parallax_1.add(parallax_tile1)
-            self.parallax_2.add(parallax_tile2)
-            self.parallax_3.add(parallax_tile3)
-            self.parallax_4.add(parallax_tile4)
+        parallax_tile_6 = ParallaxTile(self.length/2,48,6)
+        self.parallax_layer_6.add(parallax_tile_6)
+        aoffset = 64
+
+        while i < self.length/4:
+            indx = random.randrange(-5,2)
+            if indx >= 1:
+                cloud_instance_4 = Cloud(tile_size[0]*i,100,2)
+                self.weather_layer_4.add(cloud_instance_4)
+            indx = random.randrange(-5,2)
+            if indx >= 1:
+                cloud_instance_5 = Cloud(tile_size[0]*i,90,2)
+                self.weather_layer_5.add(cloud_instance_5)
+            indx = random.randrange(-5,2)
+            if indx >= 1:
+                cloud_instance_6 = Cloud(tile_size[0]*i,80,6)
+                self.weather_layer_6.add(cloud_instance_6)
+
+            parallax_tile_2 = ParallaxTile((i*64)-aoffset,16,2)
+            parallax_tile_3 = ParallaxTile((i*64)-aoffset,24,3)
+            parallax_tile_4 = ParallaxTile((i*64)-aoffset,32,4)
+            parallax_tile_5 = ParallaxTile((i*64)-aoffset,40,5)
+            
+            self.parallax_layer_2.add(parallax_tile_2)
+            self.parallax_layer_3.add(parallax_tile_3)
+            self.parallax_layer_4.add(parallax_tile_4)
+            self.parallax_layer_5.add(parallax_tile_5)
             i=i+1
+
+
+class Cloud(pygame.sprite.Sprite):
+    def __init__(self, x, y, dist):
+        pygame.sprite.Sprite.__init__(self)
+        self.x = x
+        self.y = y
+        self.dist = dist
+    
+        self.image = pygame.image.load('cloudpng.png') 
+        self.image = pygame.transform.rotate(self.image,180)
+        self.image = pygame.transform.scale(self.image,(64-random.randrange(-10,10),32-random.randrange(-10,10)))
+
+        if dist == 6:
+            self.image = pygame.image.load('s_cloud_6.png') 
+            self.image = pygame.transform.rotate(self.image,180)
+            self.image = pygame.transform.scale(self.image,(96-random.randrange(-20,20),48-random.randrange(-20,20)))
+        
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+    
+    def update(self):
+        self.rect.x = self.x
+        self.rect.y = self.y
 
 
 class Tile(pygame.sprite.Sprite):
@@ -191,29 +340,128 @@ class Tile(pygame.sprite.Sprite):
         self.rect.y = self.y
 
 
-class Foliage(pygame.sprite.Sprite):
-    def __init__(self, x, y, value):
-        pygame.sprite.Sprite.__init__(self)
-        self.x = x
-        self.y = y
-        self.type = value
+class Foliage():
+    class Tree1():
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+            self.parts = pygame.sprite.Group()
 
-        if self.type == 1:
-            self.image = pygame.image.load('Sprite-01.png')
-        if self.type == 2:
-            self.image = pygame.image.load('Sprite-02.png')
-        if self.type == 3:
-            self.image = pygame.image.load('Sprite-001.png')
-        
-        self.image = pygame.transform.rotate(self.image, 180)
+            self.trunk = Foliage.TreeTrunk1(self.x,self.y)
+            self.leaves = Foliage.TreeLeaves1(self.x-24,self.y+64)
 
-        self.rect = self.image.get_rect()
-        self.rect.x = x
-        self.rect.y = y
+            self.parts.add(self.trunk)
+            self.parts.add(self.leaves)
 
-    def update(self):
-        self.rect.x = self.x
-        self.rect.y = self.y
+    class Grass1(pygame.sprite.Sprite):
+        def __init__(self, x, y):
+            pygame.sprite.Sprite.__init__(self)
+            self.x = x
+            self.y = y
+            self.index = 0
+            self.superdex=0
+
+            self.image = pygame.image.load('s_grass_01-0.png')
+            self.image = pygame.transform.flip(self.image,False,True)
+
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+
+        def update(self):
+            self.rect.x = self.x
+            self.rect.y = self.y
+
+            self.image = pygame.image.load('s_grass_01-'+str(self.index)+'.png')
+            self.image = pygame.transform.flip(self.image,False,True)
+
+            if self.superdex == 30:
+                self.superdex = 0
+                if self.index == 5:
+                    self.index = 0
+                else:
+                    self.index += 1
+            else:
+                self.superdex += 1
+
+    class Grass2(pygame.sprite.Sprite):
+        def __init__(self, x, y):
+            pygame.sprite.Sprite.__init__(self)
+            self.x = x
+            self.y = y
+            self.index = 0
+            self.superdex=0
+
+            self.image = pygame.image.load('s_grass_02-0.png')
+            self.image = pygame.transform.flip(self.image,False,True)
+
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+
+        def update(self):
+            self.rect.x = self.x
+            self.rect.y = self.y
+
+            self.image = pygame.image.load('s_grass_02-'+str(self.index)+'.png')
+            self.image = pygame.transform.flip(self.image,False,True)
+
+            if self.superdex == 30:
+                self.superdex = 0
+                if self.index == 5:
+                    self.index = 0
+                else:
+                    self.index += 1
+            else:
+                self.superdex += 1
+
+    class TreeLeaves1(pygame.sprite.Sprite):
+        def __init__(self, x, y):
+            pygame.sprite.Sprite.__init__(self)
+            self.x = x
+            self.y = y
+            self.index = 0 + random.randrange(1,5)
+            self.superdex=0
+
+            self.image = pygame.image.load('s_tree_leaves_01-0.png')
+            self.image = pygame.transform.flip(self.image,False,True)
+
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+
+        def update(self):
+            self.rect.x = self.x
+            self.rect.y = self.y
+
+            self.image = pygame.image.load('s_tree_leaves_01-'+str(self.index)+'.png')
+            self.image = pygame.transform.flip(self.image,False,True)
+
+            if self.superdex == 60:
+                self.superdex = 0
+                if self.index == 5:
+                    self.index = 0
+                else:
+                    self.index += 1
+            else:
+                self.superdex += 1
+
+    class TreeTrunk1(pygame.sprite.Sprite):
+        def __init__(self, x, y):
+            pygame.sprite.Sprite.__init__(self)
+            self.x = x
+            self.y = y
+
+            self.image = pygame.image.load('s_tree_trunk_02-0.png')
+            self.image = pygame.transform.flip(self.image,False,True)
+
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+
+        def update(self):
+            self.rect.x = self.x
+            self.rect.y = self.y
 
 
 class ParallaxTile(pygame.sprite.Sprite):
@@ -221,18 +469,23 @@ class ParallaxTile(pygame.sprite.Sprite):
         pygame.sprite.Sprite.__init__(self)
         self.x = x
         self.y = y
-        self.dist = dist+1
+        self.dist = dist
 
-        #if dist == 2:
-        #    self.image = pygame.image.load('Sprite-1112.png')
-        #if dist == 3:
-        #    self.image = pygame.image.load('Sprite-1112.png')
-        #if dist == 4:
-        #    self.image = pygame.image.load('Sprite-1112.png')
-        #if dist == 5:
-        #    self.image = pygame.image.load('Sprite-1112.png')
-
-        self.image = pygame.image.load('Sprite-1112.png')
+        if self.dist == 2:
+            self.image = pygame.image.load('Sprite-1113.png')
+            self.image.fill((10,10,20,0),special_flags=pygame.BLEND_RGB_ADD)
+        if self.dist == 3:
+            self.image = pygame.image.load('Sprite-1112.png')
+            self.image.fill((20,20,30,0),special_flags=pygame.BLEND_RGB_ADD)
+        if self.dist == 4:
+            self.image = pygame.image.load('Sprite-1112.png')
+            self.image.fill((30,30,40,0),special_flags=pygame.BLEND_RGB_ADD)
+        if self.dist == 5:
+            self.image = pygame.image.load('Sprite-1111.png')
+            self.image.fill((40,40,50,0),special_flags=pygame.BLEND_RGB_ADD)
+        if self.dist == 6:
+            self.image = pygame.image.load('Sprite-1116.png')
+            self.image.fill((50,50,50,0),special_flags=pygame.BLEND_RGB_ADD)
 
         self.image = pygame.transform.rotate(self.image, 180)
 
@@ -243,6 +496,68 @@ class ParallaxTile(pygame.sprite.Sprite):
     def update(self):
         self.rect.x = self.x
         self.rect.y = self.y
+
+
+class Structures():
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.structure_list = pygame.sprite.Group()
+
+        self.hub = Hub(128*tile_size[0]//2,16)
+        self.structure_list.add(self.hub)
+        print("Location of campfire: "+str(128*tile_size[0]//2))
+
+    def update(self):
+        pass
+
+
+class Hub(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        pygame.sprite.Sprite.__init__(self)
+        self.x = x
+        self.y = y
+        self.progress = 0
+        self.heldcounter = 120
+
+        self.images = {
+            0: pygame.image.load('s_campfire_unlit-0.png'),
+            1: pygame.image.load('s_campfire_unlit-1.png'),
+            2: pygame.image.load('s_campfire_unlit-2.png'),
+            3: pygame.image.load('s_campfire_unlit-3.png')
+        }
+
+        self.image = self.images[self.progress]
+        self.image = pygame.transform.flip(self.image, False, True)
+
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+    def update(self):
+        self.rect.x = self.x - self.image.get_width()/2
+        self.rect.y = self.y
+
+    def check(self, target):
+        keys = pygame.key.get_pressed()
+
+        self.image = pygame.transform.flip(self.images[self.progress], False, True)
+
+        if self.x >= target.x-32 and self.x <= target.x+32:
+            self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
+
+            if keys[pygame.K_DOWN]:
+                self.heldcounter -= 1
+
+                if self.heldcounter <= 0:
+                    if not self.progress >= 3:
+                        if target.coincount >= self.progress*3:
+                            self.progress += 1
+                            target.coincount -= self.progress*3
+                            self.heldcounter = 120
+
+            else:
+                self.heldcounter = 120
 
 
 class Pygame(moderngl_window.WindowConfig):
@@ -256,30 +571,39 @@ class Pygame(moderngl_window.WindowConfig):
 
         self.world = World()
 
-        self.pg_res = window_size[0]//res_downscale,window_size[1]//res_downscale
+        self.main_res = window_size[0]//res_downscale,window_size[1]//res_downscale
 
-        self.pg_screen = pygame.Surface(self.pg_res, flags=pygame.SRCALPHA)
-        self.pg_texture = self.ctx.texture(self.pg_res, 4)
-        self.pg_texture.filter = moderngl.NEAREST, moderngl.NEAREST
-        self.pg_texture.swizzle = "BGRA"
+        self.main_surface = pygame.Surface(self.main_res, flags=pygame.SRCALPHA)
+        self.main_texture = self.ctx.texture(self.main_res, 4)
+        self.main_texture.filter = moderngl.NEAREST, moderngl.NEAREST
+        self.main_texture.swizzle = "BGRA"
 
-        self.foliage_surface = pygame.Surface(self.pg_res, flags=pygame.SRCALPHA)
-        self.foliage_texture = self.ctx.texture(self.pg_res, 4)
+        self.foliage_surface = pygame.Surface(self.main_res, flags=pygame.SRCALPHA)
+        self.foliage_texture = self.ctx.texture(self.main_res, 4)
         self.foliage_texture.filter = moderngl.NEAREST, moderngl.NEAREST
         self.foliage_texture.swizzle = "BGRA"
 
-        # Let's make a custom texture shader rendering the surface
-        self.texture_program = self.ctx.program(
-            vertex_shader = load_shader('shaders/vertex_shader.glsl'),
-            fragment_shader = load_shader('shaders/fragment_shader.glsl')
-        )
-        self.texture_program["surface"] = 0
+        self.sky_surface = pygame.Surface(self.main_res, flags=pygame.SRCALPHA)
+        self.sky_texture = self.ctx.texture(self.main_res, 4)
+        self.sky_texture.filter = moderngl.NEAREST, moderngl.NEAREST
+        self.sky_texture.swizzle = "BGRA"
 
-        self.swaying_texture_program = self.ctx.program(
-            vertex_shader=load_shader('shaders/swayingvertex_shader.glsl'),
-            fragment_shader=load_shader('shaders/swayingfragment_shader.glsl')
+        # Let's make a custom texture shader rendering the surface
+        self.main_texture_program = self.ctx.program(
+            vertex_shader=load_shader   ('shaders/main_vertex_shader.glsl'),
+            fragment_shader=load_shader ('shaders/main_fragment_shader.glsl')
         )
-        self.swaying_texture_program["surface"] = 0
+        self.foliage_texture_program = self.ctx.program(
+            vertex_shader=load_shader   ('shaders/swaying_vertex_shader.glsl'),
+            fragment_shader=load_shader ('shaders/swaying_fragment_shader.glsl')
+        )
+        self.sky_texture_program = self.ctx.program(
+            vertex_shader=load_shader   ('shaders/sky_vertex_shader.glsl'),
+            fragment_shader=load_shader ('shaders/sky_fragment_shader.glsl')
+        )
+
+        self.main_texture_program   ["surface"] = 0
+        self.foliage_texture_program["surface"] = 0
 
         buffer = self.ctx.buffer(
             data=array('f', [
@@ -291,7 +615,7 @@ class Pygame(moderngl_window.WindowConfig):
             ])
         )
         self.quad_fs = self.ctx.vertex_array(
-            self.texture_program,
+            self.main_texture_program,
             [
                 (
                     buffer,
@@ -302,7 +626,18 @@ class Pygame(moderngl_window.WindowConfig):
             ],
         )
         self.quad_fs2 = self.ctx.vertex_array(
-            self.swaying_texture_program,
+            self.foliage_texture_program,
+            [
+                (
+                    buffer,
+                    "2f 2f",
+                    "in_vert",
+                    "in_texcoord",
+                )
+            ],
+        )
+        self.quad_sky = self.ctx.vertex_array(
+            self.sky_texture_program,
             [
                 (
                     buffer,
@@ -315,8 +650,6 @@ class Pygame(moderngl_window.WindowConfig):
 
     def on_render(self, time: float, frame_time: float):
         """Called every frame"""
-        #self.texture_program["time"] = time
-
         self.world.update()
 
         self.render_pygame(time)
@@ -324,11 +657,13 @@ class Pygame(moderngl_window.WindowConfig):
         self.ctx.clear(0,0,0)
         self.ctx.enable(moderngl.BLEND)
 
-        self.swaying_texture_program["time"] = time
-        self.swaying_texture_program["sway_amplitude"] = 0.02
-        self.swaying_texture_program["sway_frequency"] = 0.5
+        #self.foliage_texture_program["time"]            = time
+        #self.foliage_texture_program["sway_amplitude"]  = 0.01
+        #self.foliage_texture_program["sway_frequency"]  = 1
 
-        self.pg_texture.use         (location=0)
+        self.sky_texture.use        (location=0)
+        self.quad_sky.render        (mode=moderngl.TRIANGLE_STRIP)
+        self.main_texture.use       (location=0)
         self.quad_fs.render         (mode=moderngl.TRIANGLE_STRIP)
         self.foliage_texture.use    (location=0)
         self.quad_fs2.render        (mode=moderngl.TRIANGLE_STRIP)
@@ -337,42 +672,61 @@ class Pygame(moderngl_window.WindowConfig):
 
     def render_pygame(self, time: float):
         """Render to offscreen surface and copy result into moderngl texture"""
-        self.pg_screen.fill((10, 150, 220, 255))
-
+        self.main_surface.fill((0, 0, 0, 0))
         self.foliage_surface.fill((0, 0, 0, 0))
 
-        pygame.draw.rect(self.pg_screen,(32,30,48,255),(0,(tile_size[1]*-2-camera_height_coef),1000,100),0)
+        pygame.draw.rect(self.main_surface,(32,30,48,255),(0,(tile_size[1]*-2-camera_height_coef),1000,100),0)
 
         # Transform entities and whatever
-        self.world.camera.apply_group(self.world.entity_list)
-        self.world.camera.apply_group(self.world.ground.terrain)
-        self.world.camera.apply_group(self.world.ground.under_terrain)
-        self.world.camera.apply_group(self.world.ground.grass)
-        self.world.camera.apply_group(self.world.background.flora)
+        self.world.camera.apply_to_group(self.world.entity_list)
 
-        self.world.camera.apply_parallax_group(self.world.background.parallax_1,1)
-        self.world.camera.apply_parallax_group(self.world.background.parallax_2,2)
-        self.world.camera.apply_parallax_group(self.world.background.parallax_3,3)
-        self.world.camera.apply_parallax_group(self.world.background.parallax_4,4)
+        self.world.camera.apply_to_group(self.world.ground.terrain)
+        self.world.camera.apply_to_group(self.world.ground.under_terrain)
+        self.world.camera.apply_to_group(self.world.ground.foliage)
+        for i in self.world.ground.combination_foliage[:]:
+            self.world.camera.apply_to_group(i.parts)
+        self.world.camera.apply_to_group(self.world.structures.structure_list)
+
+        self.world.camera.apply_to_parallax_group(self.world.background.parallax_layer_6,6)
+        self.world.camera.apply_to_parallax_group(self.world.background.parallax_layer_5,5)
+        self.world.camera.apply_to_parallax_group(self.world.background.parallax_layer_4,4)
+        self.world.camera.apply_to_parallax_group(self.world.background.parallax_layer_3,3)
+        self.world.camera.apply_to_parallax_group(self.world.background.parallax_layer_2,2)
+
+        self.world.camera.apply_to_parallax_group(self.world.background.weather_layer_4,4,True)
+        self.world.camera.apply_to_parallax_group(self.world.background.weather_layer_5,5,True)
+        self.world.camera.apply_to_parallax_group(self.world.background.weather_layer_6,6,True)
 
         # Draw entities and tiles
-        self.world.background.parallax_4.draw(self.pg_screen)
-        self.world.background.parallax_3.draw(self.pg_screen)
-        self.world.background.parallax_2.draw(self.pg_screen)
-        self.world.background.parallax_1.draw(self.pg_screen)
+        self.world.background.weather_layer_6.draw(self.main_surface)
+        self.world.background.parallax_layer_6.draw(self.main_surface)
+        self.world.background.parallax_layer_5.draw(self.main_surface)
+        self.world.background.parallax_layer_4.draw(self.main_surface)
+        self.world.background.parallax_layer_3.draw(self.main_surface)
+        self.world.background.parallax_layer_2.draw(self.main_surface)
 
-        self.world.background.flora.draw(self.foliage_surface)
+        self.world.background.weather_layer_5.draw(self.main_surface)
+        self.world.background.weather_layer_4.draw(self.main_surface)
+    
+        self.world.ground.terrain.draw      (self.main_surface)
+        self.world.ground.under_terrain.draw(self.main_surface)
 
-        self.world.ground.terrain.draw(self.pg_screen)
-        self.world.ground.under_terrain.draw(self.pg_screen)
-        self.world.ground.grass.draw(self.pg_screen)
-        self.world.entity_list.draw(self.pg_screen)
+        for i in self.world.ground.combination_foliage[:]:
+            i.parts.draw(self.foliage_surface)
+        
+        self.world.ground.foliage.draw      (self.foliage_surface)
+        self.world.entity_list.draw         (self.main_surface)
+
+        self.world.structures.structure_list.draw(self.main_surface)
+
+        sky_data = self.sky_surface.get_view("1")
+        self.sky_texture.write(sky_data)
         
         foliage_data = self.foliage_surface.get_view("1")
         self.foliage_texture.write(foliage_data)
 
-        texture_data = self.pg_screen.get_view("1")
-        self.pg_texture.write(texture_data)
+        texture_data = self.main_surface.get_view("1")
+        self.main_texture.write(texture_data)
 
 
 if __name__ == "__main__":
