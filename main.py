@@ -11,6 +11,7 @@ res_downscale = 4
 tile_size = 16, 16
 camera_height_coef = 48
 
+
 def load_shader(file_path):
     with open(file_path, 'r') as file:
         return file.read()
@@ -82,13 +83,6 @@ class Player(pygame.sprite.Sprite):
         self.coincount-=1
 
 
-class Task():
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.selected = False
-
-
 class NPC():
     # --- #
     class NPC_builder(pygame.sprite.Sprite):
@@ -98,6 +92,7 @@ class NPC():
             self.x = x
             self.y = y
             self.assigned_task = None
+            self.assigned_task_id = 0
 
             self.image = pygame.Surface([width, height]) 
             self.image.fill(color)
@@ -110,16 +105,23 @@ class NPC():
             self.rect.x = self.x
             self.rect.y = self.y
 
-            if not self.assigned_task == None:
+            if self.assigned_task:
                 if self.assigned_task.x < self.x:
-                    self.x -= 1
+                    self.x -= 0.5
                 elif self.assigned_task.x > self.x:
-                    self.x += 1
+                    self.x += 0.5
+            else:
+                self.x -= random.randrange(-1,2)/2
 
 
 class World():
     def __init__(self):
         self.entity_list = pygame.sprite.Group()
+        self.WORKER_LIST = []
+        self.TASK_QUEUE  = []
+
+        self.PROMISE_QUEUE=[]
+
         self.worldsize = 128
         self.inertia = 0.0
         
@@ -133,12 +135,15 @@ class World():
         self.player = Player((self.worldsize//2)*tile_size[0],16,(100,0,150),32,16)
         self.entity_list.add(self.player)
 
-        self.npc1 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(150,150,150),16,16)
-        self.entity_list.add(self.npc1)
-
-        task2 = Task(32,16)
-        self.entity_list.sprites()[1].task = task2
-        task2.selected = True
+        self.npc_example_1 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(150,150,150),16,16)
+        self.entity_list.add(self.npc_example_1)
+        self.npc_example_2 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(200,200,200),16,16)
+        self.entity_list.add(self.npc_example_2)
+        self.npc_example_3 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(165,165,165),16,16)
+        self.entity_list.add(self.npc_example_3)
+        self.WORKER_LIST.append(self.npc_example_1)
+        self.WORKER_LIST.append(self.npc_example_2)
+        self.WORKER_LIST.append(self.npc_example_3)
 
         for i in self.ground.foliage:
             if i.x >= self.structures.hub.x-128 and i.x <= self.structures.hub.x+128:
@@ -180,7 +185,7 @@ class World():
         self.ground.foliage.update()
         for i in self.ground.combination_foliage[:]:
             i.parts.update()
-        self.structures.hub.check(self.player)
+        self.structures.updater(self.player)
         self.structures.structure_list.update()
 
         self.background.parallax_layer_2.update()
@@ -207,6 +212,48 @@ class World():
                 i.x = 0
 
         self.camera.update(self.player)
+
+        for worker in self.WORKER_LIST:
+
+            x = 0
+            for building_project in self.structures.structure_list:
+                if worker.assigned_task_id == building_project.assigned_task_id:
+                    x += 1
+
+            if x == 0:
+                worker.assigned_task_id = 0
+                worker.assigned_task = None
+                print("TASK FREED")
+
+
+        for building_project in self.structures.structure_list:
+            if building_project.target_progress > building_project.progress and building_project.queued == False:
+                self.TASK_QUEUE.append(building_project)
+                building_project.queued = True
+
+        if self.TASK_QUEUE:
+            print("O- TASKS IN QUEUE ...")
+            print("O- LOOPING THROUGH TASK QUEUE ...")
+            for task in self.TASK_QUEUE:
+                print("O- LOOKING FOR FREE WORKER ...")
+                for i in self.WORKER_LIST:
+                    if i.assigned_task == None:
+                        random_id = random.randrange(1000,10000)
+                        print("O- FOUND FREE WORKER ...")
+                        i.assigned_task = task
+                        i.assigned_task_id = random_id
+                        task.assigned_task_id = random_id
+                        print("O- ASSIGNED TASK ...")
+                        self.TASK_QUEUE.remove(task)
+                        break
+                    else:
+                        print("X- worker taken ...")
+
+        for building_project in self.structures.structure_list:
+            for worker in self.WORKER_LIST:
+                if worker.x >= building_project.x-16 and worker.x <= building_project.x+16:
+                    if building_project.queued:
+                        building_project.build()
 
 
 class Ground():
@@ -508,8 +555,76 @@ class Structures():
         self.structure_list.add(self.hub)
         print("Location of campfire: "+str(128*tile_size[0]//2))
 
-    def update(self):
-        pass
+        i = 0
+        while i < 25:
+            self.wall_example = self.Wall(random.randrange(0,128*tile_size[0]),16)
+            self.structure_list.add(self.wall_example)
+            i += 1
+
+    def updater(self, input_target):
+        for i in self.structure_list:
+            i.check(input_target)
+
+    class Wall(pygame.sprite.Sprite):
+        def __init__(self, x, y):
+            pygame.sprite.Sprite.__init__(self)
+            self.x = x
+            self.y = y
+            self.assigned_builder = False
+            self.target_progress = 0
+            self.build_progress = 0.0
+            self.progress = 0
+            self.heldcounter = 60
+            self.queued = False
+            self.assigned_task_id = 0
+
+            self.images = {
+                0: pygame.image.load('s_wall_0-0.png'),
+                1: pygame.image.load('s_wall_0-1.png'),
+            }
+
+            self.image = self.images[self.progress]
+            self.image = pygame.transform.flip(self.image, False, True)
+
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+
+        def update(self):
+            self.rect.x = self.x - self.image.get_width()/2
+            self.rect.y = self.y
+
+            if self.build_progress >= 1.0:
+                self.progress += 1
+                self.build_progress = 0.0
+                self.assigned_task_id = 0
+
+        def build(self):
+            if self.progress < 1:
+                if self.build_progress < 1.0:
+                    self.build_progress += 0.01
+            
+                print("BUILD!!!")
+
+        def check(self, target):
+            keys = pygame.key.get_pressed()
+
+            self.image = pygame.transform.flip(self.images[self.progress], False, True)
+
+            if self.x >= target.x-16 and self.x <= target.x+16:
+                self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
+
+                if keys[pygame.K_DOWN]:
+                    self.heldcounter -= 1
+
+                    if self.heldcounter <= 0:
+                        self.target_progress += 1
+                        self.heldcounter = 60
+
+                        print("Upgraded wall "+str(self.x)+" "+str(self.y))
+
+                else:
+                    self.heldcounter = 60
 
 
 class Hub(pygame.sprite.Sprite):
@@ -518,7 +633,10 @@ class Hub(pygame.sprite.Sprite):
         self.x = x
         self.y = y
         self.progress = 0
+        self.target_progress = 0
         self.heldcounter = 120
+        self.queued = False
+        self.assigned_task_id = 0
 
         self.images = {
             0: pygame.image.load('s_campfire_unlit-0.png'),
@@ -558,6 +676,9 @@ class Hub(pygame.sprite.Sprite):
 
             else:
                 self.heldcounter = 120
+    
+    def build(self):
+        pass
 
 
 class Pygame(moderngl_window.WindowConfig):
