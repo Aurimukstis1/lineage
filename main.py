@@ -63,7 +63,7 @@ class Player(pygame.sprite.Sprite):
         pygame.sprite.Sprite.__init__(self)
         self.x = x
         self.y = y
-        self.coincount = 12
+        self.coincount = 24
 
         self.image = pygame.Surface([width, height]) 
         self.image.fill(color)
@@ -154,6 +154,18 @@ class World():
             if not (self.structures.hub.x - 128 <= i.x <= self.structures.hub.x + 128)
         ]
 
+        i = 0
+        while i < 25:
+            to_be_position = random.randrange(0,128*tile_size[0])
+            if to_be_position < self.structures.hub.x:
+                self.wall_example = Structures.Wall(to_be_position,16,"left")
+                self.structures.structure_list.add(self.wall_example)
+                i += 1
+            elif to_be_position > self.structures.hub.x:
+                self.wall_example = Structures.Wall(to_be_position,16,"right")
+                self.structures.structure_list.add(self.wall_example)
+                i += 1
+
         self.camera = Camera(window_size[0] // res_downscale, window_size[1] // res_downscale)
 
     
@@ -231,23 +243,56 @@ class World():
                 self.TASK_QUEUE.append(building_project)
                 building_project.queued = True
 
+        # if self.TASK_QUEUE:
+        #     print("O- TASKS IN QUEUE ...")
+        #     print("O- LOOPING THROUGH TASK QUEUE ...")
+        #     for task in self.TASK_QUEUE:
+        #         print("O- LOOKING FOR FREE WORKER ...")
+        #         for i in self.WORKER_LIST:
+        #             if i.assigned_task == None:
+        #                 random_id = random.randrange(1000,10000)
+        #                 print("O- FOUND FREE WORKER ...")
+        #                 i.assigned_task = task
+        #                 i.assigned_task_id = random_id
+        #                 task.assigned_task_id = random_id
+        #                 print("O- ASSIGNED TASK ...")
+        #                 self.TASK_QUEUE.remove(task)
+        #                 break
+        #             else:
+        #                 print("X- worker taken ...")
+
         if self.TASK_QUEUE:
             print("O- TASKS IN QUEUE ...")
             print("O- LOOPING THROUGH TASK QUEUE ...")
             for task in self.TASK_QUEUE:
                 print("O- LOOKING FOR FREE WORKER ...")
-                for i in self.WORKER_LIST:
-                    if i.assigned_task == None:
-                        random_id = random.randrange(1000,10000)
-                        print("O- FOUND FREE WORKER ...")
-                        i.assigned_task = task
-                        i.assigned_task_id = random_id
-                        task.assigned_task_id = random_id
-                        print("O- ASSIGNED TASK ...")
-                        self.TASK_QUEUE.remove(task)
-                        break
+                print("O- CREATING LIST OF DISTANCES TO WORKERS ...")
+                
+                distance_list = []
+                corresponding_worker_list = []
+
+                for worker in self.WORKER_LIST:
+                    if worker.assigned_task is None:
+                        distance = abs(worker.x - task.x)
+                        distance_list.append(distance)
+                        corresponding_worker_list.append(worker)
                     else:
-                        print("X- worker taken ...")
+                        print("X- Worker taken ...")
+
+                print("O- FINDING CLOSEST WORKER TO TASK ...")
+                if distance_list:
+                    random_id = random.randrange(1000,10000)
+                    min_distance_index = distance_list.index(min(distance_list))
+                    closest_worker = corresponding_worker_list[min_distance_index]
+                    print(f"O- Assigning task at x={task.x} to worker at x={closest_worker.x}")
+                    closest_worker.assigned_task = task
+                    closest_worker.assigned_task_id = random_id
+                    task.assigned_task_id = random_id
+                    print("O- ASSIGNED TASK ...")
+                    self.TASK_QUEUE.remove(task)
+                else:
+                    print("X- No available workers for this task.")
+
 
         for building_project in self.structures.structure_list:
             for worker in self.WORKER_LIST:
@@ -555,18 +600,12 @@ class Structures():
         self.structure_list.add(self.hub)
         print("Location of campfire: "+str(128*tile_size[0]//2))
 
-        i = 0
-        while i < 25:
-            self.wall_example = self.Wall(random.randrange(0,128*tile_size[0]),16)
-            self.structure_list.add(self.wall_example)
-            i += 1
-
     def updater(self, input_target):
         for i in self.structure_list:
             i.check(input_target)
 
     class Wall(pygame.sprite.Sprite):
-        def __init__(self, x, y):
+        def __init__(self, x, y, left_or_right):
             pygame.sprite.Sprite.__init__(self)
             self.x = x
             self.y = y
@@ -577,6 +616,7 @@ class Structures():
             self.heldcounter = 60
             self.queued = False
             self.assigned_task_id = 0
+            self.left_or_right = left_or_right
 
             self.images = {
                 0: pygame.image.load('s_wall_0-0.png'),
@@ -608,8 +648,11 @@ class Structures():
 
         def check(self, target):
             keys = pygame.key.get_pressed()
-
-            self.image = pygame.transform.flip(self.images[self.progress], False, True)
+            
+            if self.left_or_right is "left":
+                self.image = pygame.transform.flip(self.images[self.progress], False, True)
+            else:
+                self.image = pygame.transform.flip(self.images[self.progress], True, True)
 
             if self.x >= target.x-16 and self.x <= target.x+16:
                 self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
