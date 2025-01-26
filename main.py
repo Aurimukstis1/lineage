@@ -5,6 +5,8 @@ import pygame
 import random
 import moderngl_window
 import perlin_noise
+import time as taime
+import cProfile
 
 window_size = 1920, 1080
 res_downscale = 4
@@ -93,6 +95,11 @@ class NPC():
             self.y = y
             self.assigned_task = None
             self.assigned_task_id = 0
+            self.wandering = True
+            self.direction = 1
+            self.timer = 360
+
+            self.walking_left = False
 
             self.image = pygame.Surface([width, height]) 
             self.image.fill(color)
@@ -106,12 +113,26 @@ class NPC():
             self.rect.y = self.y
 
             if self.assigned_task:
+                self.wandering = False
                 if self.assigned_task.x < self.x:
-                    self.x -= 0.5
+                    self.x -= 0.25
                 elif self.assigned_task.x > self.x:
-                    self.x += 0.5
+                    self.x += 0.25
             else:
-                self.x -= random.randrange(-1,2)/2
+                self.wandering = True
+                self.timer -= 1
+
+                if self.timer <= 0:
+                    self.direction = random.randrange(-1,2)
+                    if self.direction is 0:
+                        self.timer = 360
+                    else:
+                        self.timer = 360
+                
+                if self.direction is -1:
+                    self.x -= 0.05
+                if self.direction is 1:
+                    self.x += 0.05
 
 
 class World():
@@ -122,7 +143,7 @@ class World():
 
         self.PROMISE_QUEUE=[]
 
-        self.worldsize = 128
+        self.worldsize = 1024
         self.inertia = 0.0
         
         self.ground = Ground(0,0,self.worldsize)
@@ -132,7 +153,7 @@ class World():
         self.ground.generate()
         self.background.generate()
 
-        self.player = Player((self.worldsize//2)*tile_size[0],16,(100,0,150),32,16)
+        self.player = Player((self.worldsize*tile_size[0])//2,16,(100,0,150),32,16)
         self.entity_list.add(self.player)
 
         self.npc_example_1 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(150,150,150),16,16)
@@ -151,20 +172,20 @@ class World():
 
         self.ground.combination_foliage = [
             i for i in self.ground.combination_foliage 
-            if not (self.structures.hub.x - 128 <= i.x <= self.structures.hub.x + 128)
+            if not (self.structures.hub.x - 256 <= i.x <= self.structures.hub.x + 256)
         ]
 
-        i = 0
-        while i < 25:
-            to_be_position = random.randrange(0,128*tile_size[0])
-            if to_be_position < self.structures.hub.x:
-                self.wall_example = Structures.Wall(to_be_position,16,"left")
-                self.structures.structure_list.add(self.wall_example)
-                i += 1
-            elif to_be_position > self.structures.hub.x:
-                self.wall_example = Structures.Wall(to_be_position,16,"right")
-                self.structures.structure_list.add(self.wall_example)
-                i += 1
+        for i in range(0,self.worldsize*tile_size[0],16*tile_size[0]):
+            if i < self.structures.hub.x:
+                if not i > self.structures.hub.x-256:
+                    self.wall_example = Structures.Wall(i,16,"left")
+                    self.structures.structure_list.add(self.wall_example)
+            elif i > self.structures.hub.x:
+                if not i < self.structures.hub.x+256:
+                    self.wall_example = Structures.Wall(i,16,"right")
+                    self.structures.structure_list.add(self.wall_example)
+        else:
+            print("[WORLD] O- Walls generated ...")
 
         self.camera = Camera(window_size[0] // res_downscale, window_size[1] // res_downscale)
 
@@ -288,7 +309,7 @@ class World():
                     closest_worker.assigned_task = task
                     closest_worker.assigned_task_id = random_id
                     task.assigned_task_id = random_id
-                    print("O- ASSIGNED TASK ...")
+                    print("O- ASSIGNED TASK ... "+str(random_id))
                     self.TASK_QUEUE.remove(task)
                 else:
                     print("X- No available workers for this task.")
@@ -298,7 +319,8 @@ class World():
             for worker in self.WORKER_LIST:
                 if worker.x >= building_project.x-16 and worker.x <= building_project.x+16:
                     if building_project.queued:
-                        building_project.build()
+                        if building_project.assigned_task_id is worker.assigned_task_id:
+                            building_project.build()
 
 
 class Ground():
@@ -354,7 +376,7 @@ class Background():
         self.parallax_layer_6.add(parallax_tile_6)
         aoffset = 64
 
-        while i < self.length/4:
+        while i < self.length/16:
             indx = random.randrange(-5,2)
             if indx >= 1:
                 cloud_instance_4 = Cloud(tile_size[0]*i,100,2)
@@ -456,6 +478,15 @@ class Foliage():
             self.image = pygame.image.load('s_grass_01-0.png')
             self.image = pygame.transform.flip(self.image,False,True)
 
+            self.images = {
+                0: pygame.image.load('s_grass_01-0.png'),
+                1: pygame.image.load('s_grass_01-1.png'),
+                2: pygame.image.load('s_grass_01-2.png'),
+                3: pygame.image.load('s_grass_01-3.png'),
+                4: pygame.image.load('s_grass_01-4.png'),
+                5: pygame.image.load('s_grass_01-5.png')
+            }
+
             self.rect = self.image.get_rect()
             self.rect.x = x
             self.rect.y = y
@@ -464,8 +495,7 @@ class Foliage():
             self.rect.x = self.x
             self.rect.y = self.y
 
-            self.image = pygame.image.load('s_grass_01-'+str(self.index)+'.png')
-            self.image = pygame.transform.flip(self.image,False,True)
+            self.image = pygame.transform.flip(self.images[self.index], False, True)
 
             if self.superdex == 30:
                 self.superdex = 0
@@ -518,6 +548,15 @@ class Foliage():
             self.image = pygame.image.load('s_tree_leaves_01-0.png')
             self.image = pygame.transform.flip(self.image,False,True)
 
+            self.images = {
+                0: pygame.image.load('s_tree_leaves_01-0.png'),
+                1: pygame.image.load('s_tree_leaves_01-1.png'),
+                2: pygame.image.load('s_tree_leaves_01-2.png'),
+                3: pygame.image.load('s_tree_leaves_01-3.png'),
+                4: pygame.image.load('s_tree_leaves_01-4.png'),
+                5: pygame.image.load('s_tree_leaves_01-5.png')
+            }
+
             self.rect = self.image.get_rect()
             self.rect.x = x
             self.rect.y = y
@@ -526,8 +565,7 @@ class Foliage():
             self.rect.x = self.x
             self.rect.y = self.y
 
-            self.image = pygame.image.load('s_tree_leaves_01-'+str(self.index)+'.png')
-            self.image = pygame.transform.flip(self.image,False,True)
+            self.image = pygame.transform.flip(self.images[self.index], False, True)
 
             if self.superdex == 60:
                 self.superdex = 0
@@ -596,8 +634,16 @@ class Structures():
         self.y = y
         self.structure_list = pygame.sprite.Group()
 
-        self.hub = Hub(128*tile_size[0]//2,16)
+        self.hub = Hub((1024*tile_size[0])//2,16)
+        self.hub_left_wall = self.Wall(((1024*tile_size[0])//2)-256,16,"left")
+        self.hub_right_wall= self.Wall(((1024*tile_size[0])//2)+256,16,"right")
+        self.hub_builder_stand = self.Builder_stand(((1024*tile_size[0])//2)+128,16,"right")
+        self.hub_archer_stand  = self.Archer_stand(((1024*tile_size[0])//2)-128,16,"left")
         self.structure_list.add(self.hub)
+        self.structure_list.add(self.hub_left_wall)
+        self.structure_list.add(self.hub_right_wall)
+        self.structure_list.add(self.hub_builder_stand)
+        self.structure_list.add(self.hub_archer_stand)
         print("Location of campfire: "+str(128*tile_size[0]//2))
 
     def updater(self, input_target):
@@ -621,6 +667,7 @@ class Structures():
             self.images = {
                 0: pygame.image.load('s_wall_0-0.png'),
                 1: pygame.image.load('s_wall_0-1.png'),
+                2: pygame.image.load('s_wall_0-2.png')
             }
 
             self.image = self.images[self.progress]
@@ -638,23 +685,25 @@ class Structures():
                 self.progress += 1
                 self.build_progress = 0.0
                 self.assigned_task_id = 0
+                self.queued = False
+                self.assigned_builder = False
 
         def build(self):
-            if self.progress < 1:
+            if self.progress < 2:
                 if self.build_progress < 1.0:
                     self.build_progress += 0.01
             
-                print("BUILD!!!")
+                print("Building ...")
 
         def check(self, target):
             keys = pygame.key.get_pressed()
             
-            if self.left_or_right is "left":
+            if self.left_or_right == "left":
                 self.image = pygame.transform.flip(self.images[self.progress], False, True)
             else:
                 self.image = pygame.transform.flip(self.images[self.progress], True, True)
 
-            if self.x >= target.x-16 and self.x <= target.x+16:
+            if self.x >= target.x-32 and self.x <= target.x+32:
                 self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
 
                 if keys[pygame.K_DOWN]:
@@ -668,6 +717,86 @@ class Structures():
 
                 else:
                     self.heldcounter = 60
+
+    class Builder_stand(pygame.sprite.Sprite):
+        def __init__(self, x, y, left_or_right):
+            pygame.sprite.Sprite.__init__(self)
+            self.x = x
+            self.y = y
+            self.left_or_right = left_or_right
+            # --- #
+            self.assigned_builder = False
+            self.target_progress = 0
+            self.build_progress = 0.0
+            self.progress = 0
+            self.heldcounter = 60
+            self.queued = False
+            self.assigned_task_id = 0
+            # --- #
+
+            self.image = pygame.image.load('s_builder_stand.png')
+            self.image = pygame.transform.flip(self.image, False, True)
+
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+
+        def update(self):
+            self.rect.x = self.x - self.image.get_width()/2
+            self.rect.y = self.y
+
+        def check(self, target):
+            keys = pygame.key.get_pressed()
+
+            self.image = pygame.image.load('s_builder_stand.png')
+            
+            if self.left_or_right == "left":
+                self.image = pygame.transform.flip(self.image, False, True)
+            else:
+                self.image = pygame.transform.flip(self.image, True, True)
+
+            if self.x >= target.x-32 and self.x <= target.x+32:
+                self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
+
+    class Archer_stand(pygame.sprite.Sprite):
+        def __init__(self, x, y, left_or_right):
+            pygame.sprite.Sprite.__init__(self)
+            self.x = x
+            self.y = y
+            self.left_or_right = left_or_right
+            # --- #
+            self.assigned_builder = False
+            self.target_progress = 0
+            self.build_progress = 0.0
+            self.progress = 0
+            self.heldcounter = 60
+            self.queued = False
+            self.assigned_task_id = 0
+            # --- #
+
+            self.image = pygame.image.load('s_archer_stand.png')
+            self.image = pygame.transform.flip(self.image, False, True)
+
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+
+        def update(self):
+            self.rect.x = self.x - self.image.get_width()/2
+            self.rect.y = self.y
+
+        def check(self, target):
+            keys = pygame.key.get_pressed()
+
+            self.image = pygame.image.load('s_archer_stand.png')
+            
+            if self.left_or_right == "left":
+                self.image = pygame.transform.flip(self.image, False, True)
+            else:
+                self.image = pygame.transform.flip(self.image, True, True)
+
+            if self.x >= target.x-32 and self.x <= target.x+32:
+                self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
 
 
 class Hub(pygame.sprite.Sprite):
@@ -821,10 +950,6 @@ class Pygame(moderngl_window.WindowConfig):
         self.ctx.clear(0,0,0)
         self.ctx.enable(moderngl.BLEND)
 
-        #self.foliage_texture_program["time"]            = time
-        #self.foliage_texture_program["sway_amplitude"]  = 0.01
-        #self.foliage_texture_program["sway_frequency"]  = 1
-
         self.sky_texture.use        (location=0)
         self.quad_sky.render        (mode=moderngl.TRIANGLE_STRIP)
         self.main_texture.use       (location=0)
@@ -847,7 +972,7 @@ class Pygame(moderngl_window.WindowConfig):
         self.world.camera.apply_to_group(self.world.ground.terrain)
         self.world.camera.apply_to_group(self.world.ground.under_terrain)
         self.world.camera.apply_to_group(self.world.ground.foliage)
-        for i in self.world.ground.combination_foliage[:]:
+        for i in self.world.ground.combination_foliage:
             self.world.camera.apply_to_group(i.parts)
         self.world.camera.apply_to_group(self.world.structures.structure_list)
 
@@ -875,7 +1000,7 @@ class Pygame(moderngl_window.WindowConfig):
         self.world.ground.terrain.draw      (self.main_surface)
         self.world.ground.under_terrain.draw(self.main_surface)
 
-        for i in self.world.ground.combination_foliage[:]:
+        for i in self.world.ground.combination_foliage:
             i.parts.draw(self.foliage_surface)
         
         self.world.ground.foliage.draw      (self.foliage_surface)
@@ -893,5 +1018,9 @@ class Pygame(moderngl_window.WindowConfig):
         self.main_texture.write(texture_data)
 
 
-if __name__ == "__main__":
+def main():
     moderngl_window.run_window_config(Pygame, args=("--window", "pygame2"))
+
+if __name__ == "__main__":
+    main()
+    
