@@ -7,6 +7,7 @@ import moderngl_window
 import perlin_noise
 import time as taime
 import cProfile
+import spritesheet
 
 window_size = 1920, 1080
 res_downscale = 4
@@ -78,6 +79,8 @@ class Player(pygame.sprite.Sprite):
         self.rect.x = self.x
         self.rect.y = self.y
 
+        pygame.draw.rect(self.image, (255,255,255),(0,0,2,2))
+
     def givecoin(self):
         self.coincount+=1
 
@@ -86,7 +89,99 @@ class Player(pygame.sprite.Sprite):
 
 
 class NPC():
-    # --- #
+    class NPC_citizen(pygame.sprite.Sprite):
+        def __init__(self, x, y, color, height, width):
+            pygame.sprite.Sprite.__init__(self)
+            self.id = random.randrange(1000,10000)
+            self.x = x
+            self.y = y
+            self.wandering = True
+            self.direction = 1
+            self.timer = 360
+            self.assigned_target = None
+
+            self.walking_left = False
+
+            self.image = pygame.Surface([width, height]) 
+            self.image.fill(color)
+            
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+        
+        def update(self):
+            self.rect.x = self.x
+            self.rect.y = self.y
+
+            if self.assigned_target:
+                self.wandering = False
+                if self.assigned_target.x < self.x:
+                    self.x -= 0.25
+                elif self.assigned_target.x > self.x:
+                    self.x += 0.25
+            else:
+                self.wandering = True
+                self.timer -= 1
+
+                if self.timer <= 0:
+                    self.direction = random.randrange(-1,2)
+                    if self.direction is 0:
+                        self.timer = 360
+                    else:
+                        self.timer = 360
+                
+                if self.direction is -1:
+                    self.x -= 0.05
+                if self.direction is 1:
+                    self.x += 0.05
+
+    class NPC_beggar(pygame.sprite.Sprite):
+        def __init__(self, x, y, color, height, width):
+            pygame.sprite.Sprite.__init__(self)
+            self.id = random.randrange(1000,10000)
+            self.x = x
+            self.y = y
+            self.wandering = True
+            self.direction = 1
+            self.timer = 360
+            self.assigned_target = None
+            self.assigned_target_id = 0
+
+            self.walking_left = False
+
+            self.image = pygame.Surface([width, height]) 
+            self.image.fill(color)
+            
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+        
+        def update(self):
+            self.rect.x = self.x
+            self.rect.y = self.y
+
+            if self.assigned_target:
+                self.wandering = False
+                if self.assigned_target.x < self.x:
+                    self.x -= 0.25
+                elif self.assigned_target.x > self.x:
+                    self.x += 0.25
+            else:
+                self.wandering = True
+                self.timer -= 1
+
+                if self.timer <= 0:
+                    self.direction = random.randrange(-1,2)
+                    if self.direction is 0:
+                        self.timer = 360
+                    else:
+                        self.timer = 360
+                
+                if self.direction is -1:
+                    self.x -= 0.05
+                if self.direction is 1:
+                    self.x += 0.05
+
     class NPC_builder(pygame.sprite.Sprite):
         def __init__(self, x, y, color, height, width):
             pygame.sprite.Sprite.__init__(self)
@@ -135,20 +230,50 @@ class NPC():
                     self.x += 0.05
 
 
+class Coin(pygame.sprite.Sprite):
+    def __init__(self, x, y, vel_x=0, vel_y=0):
+        pygame.sprite.Sprite.__init__(self)
+        self.x = x
+        self.y = y
+        self.velocity_x = vel_x
+        self.velocity_y = vel_y
+        self.id = random.randrange(1000,10000)
+
+        self.image = pygame.transform.flip(pygame.image.load('s_coin.png'),False,True)
+        
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+    def update(self):
+        self.x += self.velocity_x
+        self.y += self.velocity_y
+
+        self.velocity_x = self.velocity_x*0.98
+        self.velocity_y -= 0.01
+
+        if self.y <= 16:
+            self.velocity_y = 0
+
+        self.rect.x = self.x
+        self.rect.y = self.y
+
 class World():
     def __init__(self):
         self.entity_list = pygame.sprite.Group()
         self.WORKER_LIST = []
+        self.BEGGAR_LIST = []
+        self.CITIZEN_LIST= []
         self.TASK_QUEUE  = []
-
         self.PROMISE_QUEUE=[]
+        self.COIN_LIST   = []
 
-        self.worldsize = 1024
-        self.inertia = 0.0
+        self.worldsize   = 1024
+        self.inertia     = 0.0
         
-        self.ground = Ground(0,0,self.worldsize)
-        self.structures = Structures(0,0)
-        self.background = Background(0,0,self.worldsize)
+        self.ground      = Ground(0,0,self.worldsize)
+        self.structures  = Structures(0,0)
+        self.background  = Background(0,0,self.worldsize)
 
         self.ground.generate()
         self.background.generate()
@@ -156,32 +281,35 @@ class World():
         self.player = Player((self.worldsize*tile_size[0])//2,16,(100,0,150),32,16)
         self.entity_list.add(self.player)
 
-        self.npc_example_1 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(150,150,150),16,16)
+        self.npc_example_1 = NPC.NPC_beggar((self.worldsize//2)*tile_size[0],16,(150,100,100),16,16)
         self.entity_list.add(self.npc_example_1)
-        self.npc_example_2 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(200,200,200),16,16)
+        self.npc_example_2 = NPC.NPC_beggar((self.worldsize//2)*tile_size[0],16,(200,120,100),16,16)
         self.entity_list.add(self.npc_example_2)
-        self.npc_example_3 = NPC.NPC_builder((self.worldsize//2)*tile_size[0],16,(165,165,165),16,16)
+        self.npc_example_3 = NPC.NPC_beggar((self.worldsize//2)*tile_size[0],16,(165,100,100),16,16)
         self.entity_list.add(self.npc_example_3)
-        self.WORKER_LIST.append(self.npc_example_1)
-        self.WORKER_LIST.append(self.npc_example_2)
-        self.WORKER_LIST.append(self.npc_example_3)
+        self.BEGGAR_LIST.append(self.npc_example_1)
+        self.BEGGAR_LIST.append(self.npc_example_2)
+        self.BEGGAR_LIST.append(self.npc_example_3)
 
+        # kill foliage in radius of the campfire
         for i in self.ground.foliage:
             if i.x >= self.structures.hub.x-128 and i.x <= self.structures.hub.x+128:
                 i.kill()
 
+        # kill trees in radius of the campfire
         self.ground.combination_foliage = [
             i for i in self.ground.combination_foliage 
             if not (self.structures.hub.x - 256 <= i.x <= self.structures.hub.x + 256)
         ]
 
+        # generating wall mounds in the map, every 16 tiles
         for i in range(0,self.worldsize*tile_size[0],16*tile_size[0]):
             if i < self.structures.hub.x:
-                if not i > self.structures.hub.x-256:
+                if not i > self.structures.hub.x-265:
                     self.wall_example = Structures.Wall(i,16,"left")
                     self.structures.structure_list.add(self.wall_example)
             elif i > self.structures.hub.x:
-                if not i < self.structures.hub.x+256:
+                if not i < self.structures.hub.x+265:
                     self.wall_example = Structures.Wall(i,16,"right")
                     self.structures.structure_list.add(self.wall_example)
         else:
@@ -189,10 +317,11 @@ class World():
 
         self.camera = Camera(window_size[0] // res_downscale, window_size[1] // res_downscale)
 
+        self.coin_drop_cooldown = 0
     
     def update(self):
+        # --- # PLAYER MOVEMENT
         keys = pygame.key.get_pressed()
-
         if keys[pygame.K_LSHIFT]==False:
             if keys[pygame.K_LEFT]:
                 if not self.inertia < -0.5:
@@ -207,29 +336,36 @@ class World():
             if keys[pygame.K_RIGHT]:
                 if not self.inertia > 1.0:
                     self.inertia += 0.05
-        
+        if self.coin_drop_cooldown == 0:
+            if keys[pygame.K_DOWN]==True:
+                coin = Coin(self.player.x,32,random.randrange(-1,2)/8,0.3)
+                self.COIN_LIST.append(coin)
+                self.entity_list.add(coin)
+                self.coin_drop_cooldown = 1
+        if keys[pygame.K_DOWN]==False:
+            self.coin_drop_cooldown = 0
         self.player.x += self.inertia
-
         self.inertia = self.inertia / 1.05
+        # --- # 
 
-        self.entity_list.update()
-        self.ground.terrain.update()
-        self.ground.under_terrain.update()
-        self.ground.foliage.update()
-        for i in self.ground.combination_foliage[:]:
-            i.parts.update()
-        self.structures.updater(self.player)
-        self.structures.structure_list.update()
-
+        # --- # UPDATING THE WORLD
         self.background.parallax_layer_2.update()
         self.background.parallax_layer_3.update()
         self.background.parallax_layer_4.update()
         self.background.parallax_layer_5.update()
         self.background.parallax_layer_6.update()
-
         self.background.weather_layer_4.update()
         self.background.weather_layer_5.update()
         self.background.weather_layer_6.update()
+        for i in self.ground.combination_foliage[:]:
+            i.parts.update()
+        self.ground.foliage.update()
+
+        self.entity_list.update()
+        self.ground.terrain.update()
+        self.ground.under_terrain.update() # < very useless, bunch of sprites for no reason
+        self.structures.update_check(self.player)
+        self.structures.structure_list.update()
 
         for i in self.background.weather_layer_4:
             i.x += 0.01
@@ -245,43 +381,54 @@ class World():
                 i.x = 0
 
         self.camera.update(self.player)
+        # --- #
 
-        for worker in self.WORKER_LIST:
+        # --- # NPCs / BEGGARs
+        if self.BEGGAR_LIST:
+            for beggar in self.BEGGAR_LIST:
+                if beggar.assigned_target is None:
+                    distance_list = []
+                    dist_coin_list= []
+                    if self.COIN_LIST:
+                        for coin in self.COIN_LIST:
+                            distance = abs(beggar.x - coin.x)
+                            if distance <= 128:
+                                distance_list.append(distance)
+                                dist_coin_list.append(coin)
+                    else:
+                        print("All coins checked ...")
+                    
+                    if distance_list:
+                        min_distance_index = distance_list.index(min(distance_list))
+                        closest_coin = dist_coin_list[min_distance_index]
+                        beggar.assigned_target = closest_coin
+                        beggar.assigned_target_id = closest_coin.id
+                else:
+                    if beggar.x > beggar.assigned_target.x-16 and beggar.x < beggar.assigned_target.x+16 and beggar.assigned_target.y < 32:
+                        citizen = NPC.NPC_citizen(beggar.x,16,(230,245,255),16,16)
+                        self.BEGGAR_LIST.remove(beggar)
+                        for aaa in self.COIN_LIST:
+                            if aaa.id == beggar.assigned_target_id:
+                                self.COIN_LIST.remove(aaa)
+                                self.entity_list.remove(aaa)
+                                for other_beggar in self.BEGGAR_LIST:
+                                    if other_beggar is not beggar:
+                                        if other_beggar.assigned_target_id == beggar.assigned_target_id:
+                                            other_beggar.assigned_target = None
+                                            other_beggar.assigned_target_id = 0
+                        self.entity_list.remove(beggar)
+                        self.CITIZEN_LIST.append(citizen)
+                        self.entity_list.add(citizen)
+        # --- #
 
-            x = 0
-            for building_project in self.structures.structure_list:
-                if worker.assigned_task_id == building_project.assigned_task_id:
-                    x += 1
-
-            if x == 0:
-                worker.assigned_task_id = 0
-                worker.assigned_task = None
-                print("TASK FREED")
-
-
+        # --- # BUILDING 
+        # If there is an object needing to be built, it's put into the TASK QUEUE
         for building_project in self.structures.structure_list:
             if building_project.target_progress > building_project.progress and building_project.queued == False:
                 self.TASK_QUEUE.append(building_project)
                 building_project.queued = True
 
-        # if self.TASK_QUEUE:
-        #     print("O- TASKS IN QUEUE ...")
-        #     print("O- LOOPING THROUGH TASK QUEUE ...")
-        #     for task in self.TASK_QUEUE:
-        #         print("O- LOOKING FOR FREE WORKER ...")
-        #         for i in self.WORKER_LIST:
-        #             if i.assigned_task == None:
-        #                 random_id = random.randrange(1000,10000)
-        #                 print("O- FOUND FREE WORKER ...")
-        #                 i.assigned_task = task
-        #                 i.assigned_task_id = random_id
-        #                 task.assigned_task_id = random_id
-        #                 print("O- ASSIGNED TASK ...")
-        #                 self.TASK_QUEUE.remove(task)
-        #                 break
-        #             else:
-        #                 print("X- worker taken ...")
-
+        # Assigning workers to tasks if there are any
         if self.TASK_QUEUE:
             print("O- TASKS IN QUEUE ...")
             print("O- LOOPING THROUGH TASK QUEUE ...")
@@ -305,7 +452,6 @@ class World():
                     random_id = random.randrange(1000,10000)
                     min_distance_index = distance_list.index(min(distance_list))
                     closest_worker = corresponding_worker_list[min_distance_index]
-                    print(f"O- Assigning task at x={task.x} to worker at x={closest_worker.x}")
                     closest_worker.assigned_task = task
                     closest_worker.assigned_task_id = random_id
                     task.assigned_task_id = random_id
@@ -313,15 +459,26 @@ class World():
                     self.TASK_QUEUE.remove(task)
                 else:
                     print("X- No available workers for this task.")
+        
+        # If the building is finished, free the worker
+        for worker in self.WORKER_LIST:
+            x = 0
+            for building_project in self.structures.structure_list:
+                if worker.assigned_task_id == building_project.assigned_task_id:
+                    x += 1
+            if x == 0:
+                worker.assigned_task_id = 0
+                worker.assigned_task = None
+                print("O- WORKER FREED ...")
 
-
+        # If the assigned worker is on the structure, it starts progressing
         for building_project in self.structures.structure_list:
             for worker in self.WORKER_LIST:
                 if worker.x >= building_project.x-16 and worker.x <= building_project.x+16:
                     if building_project.queued:
                         if building_project.assigned_task_id is worker.assigned_task_id:
                             building_project.build()
-
+        # --- #
 
 class Ground():
     def __init__(self, x, y, length):
@@ -340,7 +497,7 @@ class Ground():
             indx = random.randrange(-1,2)
             tile        = Tile(tile_size[0]*i,self.y,random.randrange(1,3))
             under_tile  = Tile(tile_size[0]*i,(self.y-tile_size[1]*4)+random.randrange(0,5),random.randrange(3,5))
-            grass_tuft  = Foliage.Grass1(random.randrange(0,self.length*tile_size[0]),tile_size[1])
+            grass_tuft  = Foliage.Grass1(random.randrange(0,self.length*tile_size[0]),tile_size[1]-1)
 
             if indx >= 1:
                 displacement = (i*tile_size[0])-random.randrange(-10,10)
@@ -435,7 +592,7 @@ class Tile(pygame.sprite.Sprite):
         self.type = value
 
         if self.type == 1:
-            self.image = pygame.image.load('Sprite-0001.png')
+            self.image = pygame.image.load('Sprite-0002.png')
         if self.type == 2:
             self.image = pygame.image.load('Sprite-0002.png')
         if self.type == 3:
@@ -475,17 +632,21 @@ class Foliage():
             self.index = 0
             self.superdex=0
 
-            self.image = pygame.image.load('s_grass_01-0.png')
-            self.image = pygame.transform.flip(self.image,False,True)
+            ss = spritesheet.SpriteSheet('s_grass_01-spritesheet.png')
 
-            self.images = {
-                0: pygame.image.load('s_grass_01-0.png'),
-                1: pygame.image.load('s_grass_01-1.png'),
-                2: pygame.image.load('s_grass_01-2.png'),
-                3: pygame.image.load('s_grass_01-3.png'),
-                4: pygame.image.load('s_grass_01-4.png'),
-                5: pygame.image.load('s_grass_01-5.png')
-            }
+            images = []
+            self.images = ss.load_strip((0,0,16,16), 6)
+
+            self.image = pygame.transform.flip(self.images[self.index], False, True)
+
+            # self.images = {
+            #     0: pygame.image.load('s_grass_01-0.png'),
+            #     1: pygame.image.load('s_grass_01-1.png'),
+            #     2: pygame.image.load('s_grass_01-2.png'),
+            #     3: pygame.image.load('s_grass_01-3.png'),
+            #     4: pygame.image.load('s_grass_01-4.png'),
+            #     5: pygame.image.load('s_grass_01-5.png')
+            # }
 
             self.rect = self.image.get_rect()
             self.rect.x = x
@@ -545,17 +706,21 @@ class Foliage():
             self.index = 0 + random.randrange(1,5)
             self.superdex=0
 
-            self.image = pygame.image.load('s_tree_leaves_01-0.png')
-            self.image = pygame.transform.flip(self.image,False,True)
+            ss = spritesheet.SpriteSheet('s_tree_leaves_01-spritesheet.png')
 
-            self.images = {
-                0: pygame.image.load('s_tree_leaves_01-0.png'),
-                1: pygame.image.load('s_tree_leaves_01-1.png'),
-                2: pygame.image.load('s_tree_leaves_01-2.png'),
-                3: pygame.image.load('s_tree_leaves_01-3.png'),
-                4: pygame.image.load('s_tree_leaves_01-4.png'),
-                5: pygame.image.load('s_tree_leaves_01-5.png')
-            }
+            images = []
+            self.images = ss.load_strip((0,0,64,64), 6)
+
+            self.image = pygame.transform.flip(self.images[self.index], False, True)
+
+            # self.images = {
+            #     0: pygame.image.load('s_tree_leaves_01-0.png'),
+            #     1: pygame.image.load('s_tree_leaves_01-1.png'),
+            #     2: pygame.image.load('s_tree_leaves_01-2.png'),
+            #     3: pygame.image.load('s_tree_leaves_01-3.png'),
+            #     4: pygame.image.load('s_tree_leaves_01-4.png'),
+            #     5: pygame.image.load('s_tree_leaves_01-5.png')
+            # }
 
             self.rect = self.image.get_rect()
             self.rect.x = x
@@ -646,7 +811,7 @@ class Structures():
         self.structure_list.add(self.hub_archer_stand)
         print("Location of campfire: "+str(128*tile_size[0]//2))
 
-    def updater(self, input_target):
+    def update_check(self, input_target):
         for i in self.structure_list:
             i.check(input_target)
 
@@ -703,7 +868,7 @@ class Structures():
             else:
                 self.image = pygame.transform.flip(self.images[self.progress], True, True)
 
-            if self.x >= target.x-32 and self.x <= target.x+32:
+            if self.x >= target.x-16 and self.x <= target.x+16:
                 self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
 
                 if keys[pygame.K_DOWN]:
@@ -755,7 +920,7 @@ class Structures():
             else:
                 self.image = pygame.transform.flip(self.image, True, True)
 
-            if self.x >= target.x-32 and self.x <= target.x+32:
+            if self.x >= target.x-16 and self.x <= target.x+16:
                 self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
 
     class Archer_stand(pygame.sprite.Sprite):
@@ -795,7 +960,7 @@ class Structures():
             else:
                 self.image = pygame.transform.flip(self.image, True, True)
 
-            if self.x >= target.x-32 and self.x <= target.x+32:
+            if self.x >= target.x-16 and self.x <= target.x+16:
                 self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
 
 
