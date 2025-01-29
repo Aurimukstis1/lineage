@@ -99,6 +99,7 @@ class NPC():
             self.direction = 1
             self.timer = 360
             self.assigned_target = None
+            self.coin_count = 1
 
             self.walking_left = False
 
@@ -229,6 +230,52 @@ class NPC():
                 if self.direction is 1:
                     self.x += 0.05
 
+    class NPC_archer(pygame.sprite.Sprite):
+        def __init__(self, x, y, color, height, width):
+            pygame.sprite.Sprite.__init__(self)
+            self.id = random.randrange(1000,10000)
+            self.x = x
+            self.y = y
+            self.wandering = True
+            self.direction = 1
+            self.timer = 360
+            self.assigned_target = None
+            self.coin_count = 1
+
+            self.walking_left = False
+
+            self.image = pygame.Surface([width, height]) 
+            self.image.fill(color)
+            
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+        
+        def update(self):
+            self.rect.x = self.x
+            self.rect.y = self.y
+
+            if self.assigned_target:
+                self.wandering = False
+                if self.assigned_target.x < self.x:
+                    self.x -= 0.25
+                elif self.assigned_target.x > self.x:
+                    self.x += 0.25
+            else:
+                self.wandering = True
+                self.timer -= 1
+
+                if self.timer <= 0:
+                    self.direction = random.randrange(-1,2)
+                    if self.direction is 0:
+                        self.timer = 360
+                    else:
+                        self.timer = 360
+                
+                if self.direction is -1:
+                    self.x -= 0.05
+                if self.direction is 1:
+                    self.x += 0.05
 
 class Coin(pygame.sprite.Sprite):
     def __init__(self, x, y, vel_x=0, vel_y=0):
@@ -258,10 +305,13 @@ class Coin(pygame.sprite.Sprite):
         self.rect.x = self.x
         self.rect.y = self.y
 
+
 class World():
     def __init__(self):
         self.entity_list = pygame.sprite.Group()
         self.WORKER_LIST = []
+        self.FIGHTER_ARCHER_LIST = []
+        self.FIGHTER_SWORDS_LIST = []
         self.BEGGAR_LIST = []
         self.CITIZEN_LIST= []
         self.TASK_QUEUE  = []
@@ -337,11 +387,18 @@ class World():
                 if not self.inertia > 1.0:
                     self.inertia += 0.05
         if self.coin_drop_cooldown == 0:
-            if keys[pygame.K_DOWN]==True:
-                coin = Coin(self.player.x,32,random.randrange(-1,2)/8,0.3)
-                self.COIN_LIST.append(coin)
-                self.entity_list.add(coin)
-                self.coin_drop_cooldown = 1
+            is_on_building = 0
+            for structure in self.structures.structure_list:
+                if self.player.x >= structure.x-16 and self.player.x <= structure.x+16:
+                    if not structure.is_camp:
+                        is_on_building += 1
+
+            if is_on_building == 0:
+                if keys[pygame.K_DOWN]==True:
+                    coin = Coin(self.player.x,32,random.randrange(-1,2)/8,0.3)
+                    self.COIN_LIST.append(coin)
+                    self.entity_list.add(coin)
+                    self.coin_drop_cooldown = 1
         if keys[pygame.K_DOWN]==False:
             self.coin_drop_cooldown = 0
         self.player.x += self.inertia
@@ -395,8 +452,6 @@ class World():
                             if distance <= 128:
                                 distance_list.append(distance)
                                 dist_coin_list.append(coin)
-                    else:
-                        print("All coins checked ...")
                     
                     if distance_list:
                         min_distance_index = distance_list.index(min(distance_list))
@@ -404,7 +459,7 @@ class World():
                         beggar.assigned_target = closest_coin
                         beggar.assigned_target_id = closest_coin.id
                 else:
-                    if beggar.x > beggar.assigned_target.x-16 and beggar.x < beggar.assigned_target.x+16 and beggar.assigned_target.y < 32:
+                    if beggar.x > beggar.assigned_target.x-16 and beggar.x < beggar.assigned_target.x+16 and beggar.assigned_target.y <= 32:
                         citizen = NPC.NPC_citizen(beggar.x,16,(230,245,255),16,16)
                         self.BEGGAR_LIST.remove(beggar)
                         for aaa in self.COIN_LIST:
@@ -419,6 +474,83 @@ class World():
                         self.entity_list.remove(beggar)
                         self.CITIZEN_LIST.append(citizen)
                         self.entity_list.add(citizen)
+
+        # Citizens picking up coins
+        if self.CITIZEN_LIST:
+            for citizen in self.CITIZEN_LIST:
+                if self.COIN_LIST:
+                    for coin in self.COIN_LIST:
+                        if coin.x > citizen.x-16 and coin.x < citizen.x+16 and coin.y <= 32:
+                            citizen.coin_count+=1
+                            self.COIN_LIST.remove(coin)
+                            self.entity_list.remove(coin)
+
+                            if self.BEGGAR_LIST:
+                                for beggar in self.BEGGAR_LIST:
+                                    if coin.id == beggar.assigned_target_id:
+                                        beggar.assigned_target_id = 0
+                                        beggar.assigned_target = None
+
+        # Spawning beggars
+        for camp in self.structures.structure_list:
+            if camp.is_camp:
+                # free up beggar list if they turn into citizens
+                if camp.beggar_list:
+                    for assigned_beggar in camp.beggar_list:
+                        x = 0
+                        for beggar in self.BEGGAR_LIST:
+                            if beggar.id == assigned_beggar:
+                                x += 1
+                        if x == 0:
+                            camp.beggar_list.remove(assigned_beggar)
+
+                # spawn beggars
+                if len(camp.beggar_list) <= 1:
+                    if camp.counter <= 0:
+                        camp.counter = 500
+                        beggar = NPC.NPC_beggar(camp.x, camp.y, (100,100,100), 16, 16)
+                        self.BEGGAR_LIST.append(beggar)
+                        self.entity_list.add(beggar)
+                        camp.beggar_list.append(beggar.id)
+                    else:
+                        camp.counter = camp.counter - 1
+        
+        for structure in self.structures.structure_list:
+            if structure.is_builderstand:
+                for citizen in self.CITIZEN_LIST:
+                    if structure.hammer_count > 0:
+                        if citizen.assigned_target is None:
+                            citizen.assigned_target = structure
+                    else:
+                        if citizen.assigned_target is structure:
+                            citizen.assigned_target = None
+                    
+                    if citizen.x >= structure.x-16 and citizen.x <= structure.x+16:
+                        if structure.hammer_count > 0:
+                            worker = NPC.NPC_builder(citizen.x,citizen.y,(255,0,0),18,8)
+                            self.CITIZEN_LIST.remove(citizen)
+                            self.WORKER_LIST.append(worker)
+                            self.entity_list.remove(citizen)
+                            self.entity_list.add(worker)
+                            structure.hammer_count -= 1
+
+            if structure.is_archerstand:
+                for citizen in self.CITIZEN_LIST:
+                    if structure.bow_count > 0:
+                        if citizen.assigned_target is None:
+                            citizen.assigned_target = structure
+                    else:
+                        if citizen.assigned_target is structure:
+                            citizen.assigned_target = None
+
+                    if citizen.x >= structure.x-16 and citizen.x <= structure.x+16:
+                        if structure.bow_count > 0:
+                            archer = NPC.NPC_archer(citizen.x,citizen.y,(0,255,0),18,8)
+                            self.CITIZEN_LIST.remove(citizen)
+                            self.FIGHTER_ARCHER_LIST.append(archer)
+                            self.entity_list.remove(citizen)
+                            self.entity_list.add(archer)
+                            structure.bow_count -= 1
         # --- #
 
         # --- # BUILDING 
@@ -809,6 +941,10 @@ class Structures():
         self.structure_list.add(self.hub_right_wall)
         self.structure_list.add(self.hub_builder_stand)
         self.structure_list.add(self.hub_archer_stand)
+
+        beggar_camp = self.Beggar_camp(1024*tile_size[0]//2+362,16)
+        self.structure_list.add(beggar_camp)
+
         print("Location of campfire: "+str(128*tile_size[0]//2))
 
     def update_check(self, input_target):
@@ -828,6 +964,12 @@ class Structures():
             self.queued = False
             self.assigned_task_id = 0
             self.left_or_right = left_or_right
+            # --- #
+            self.is_camp = False
+            self.is_wall = True
+            self.is_Hub  = False
+            self.is_builderstand = False
+            self.is_archerstand = False
 
             self.images = {
                 0: pygame.image.load('s_wall_0-0.png'),
@@ -868,6 +1010,9 @@ class Structures():
             else:
                 self.image = pygame.transform.flip(self.images[self.progress], True, True)
 
+            if self.target_progress > self.progress:
+                pygame.draw.rect(self.image,(255,255,255),(0,0,32,64),width=1)
+
             if self.x >= target.x-16 and self.x <= target.x+16:
                 self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
 
@@ -889,6 +1034,7 @@ class Structures():
             self.x = x
             self.y = y
             self.left_or_right = left_or_right
+            self.hammer_count = 0
             # --- #
             self.assigned_builder = False
             self.target_progress = 0
@@ -898,6 +1044,11 @@ class Structures():
             self.queued = False
             self.assigned_task_id = 0
             # --- #
+            self.is_camp = False
+            self.is_wall = False
+            self.is_Hub  = False
+            self.is_builderstand = True
+            self.is_archerstand = False
 
             self.image = pygame.image.load('s_builder_stand.png')
             self.image = pygame.transform.flip(self.image, False, True)
@@ -920,8 +1071,20 @@ class Structures():
             else:
                 self.image = pygame.transform.flip(self.image, True, True)
 
+            for whxjerg in range(self.hammer_count):
+                pygame.draw.rect(self.image,(255,255,255),(20+(5*whxjerg),8,4,12),width=1)
+
             if self.x >= target.x-16 and self.x <= target.x+16:
                 self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
+
+                if keys[pygame.K_DOWN]:
+                    self.heldcounter -= 1
+
+                    if self.heldcounter <= 0 and self.hammer_count < 4:
+                        self.hammer_count += 1
+                        self.heldcounter = 60
+                else:
+                    self.heldcounter = 60
 
     class Archer_stand(pygame.sprite.Sprite):
         def __init__(self, x, y, left_or_right):
@@ -929,6 +1092,7 @@ class Structures():
             self.x = x
             self.y = y
             self.left_or_right = left_or_right
+            self.bow_count = 0
             # --- #
             self.assigned_builder = False
             self.target_progress = 0
@@ -938,6 +1102,11 @@ class Structures():
             self.queued = False
             self.assigned_task_id = 0
             # --- #
+            self.is_camp = False
+            self.is_wall = False
+            self.is_Hub  = False
+            self.is_builderstand = False
+            self.is_archerstand = True
 
             self.image = pygame.image.load('s_archer_stand.png')
             self.image = pygame.transform.flip(self.image, False, True)
@@ -960,8 +1129,55 @@ class Structures():
             else:
                 self.image = pygame.transform.flip(self.image, True, True)
 
+            for whxjerg in range(self.bow_count):
+                pygame.draw.rect(self.image,(255,255,255),(20+(5*whxjerg),8,4,12),width=1)
+
             if self.x >= target.x-16 and self.x <= target.x+16:
                 self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
+
+                if keys[pygame.K_DOWN]:
+                    self.heldcounter -= 1
+
+                    if self.heldcounter <= 0 and self.bow_count < 4:
+                        self.bow_count += 1
+                        self.heldcounter = 60
+                else:
+                    self.heldcounter = 60
+
+    class Beggar_camp(pygame.sprite.Sprite):
+        def __init__(self, x, y):
+            pygame.sprite.Sprite.__init__(self)
+            self.x = x
+            self.y = y
+            self.counter = 500 
+            self.beggar_list = []
+            # --- #
+            self.assigned_builder = False
+            self.target_progress = 0
+            self.build_progress = 0.0
+            self.progress = 0
+            self.heldcounter = 60
+            self.queued = False
+            self.assigned_task_id = 0
+            # --- #
+            self.is_camp = True
+            self.is_wall = False
+            self.is_Hub  = False
+            self.is_builderstand = False
+            self.is_archerstand = False
+
+            self.image = pygame.transform.flip(pygame.image.load('s_homeless_camp.png'), False, True)
+
+            self.rect = self.image.get_rect()
+            self.rect.x = x
+            self.rect.y = y
+
+        def update(self):
+            self.rect.x = self.x - self.image.get_width()/2
+            self.rect.y = self.y
+
+        def check(self, target):
+            pass
 
 
 class Hub(pygame.sprite.Sprite):
@@ -974,6 +1190,12 @@ class Hub(pygame.sprite.Sprite):
         self.heldcounter = 120
         self.queued = False
         self.assigned_task_id = 0
+
+        self.is_camp = False
+        self.is_wall = False
+        self.is_Hub  = True
+        self.is_builderstand = False
+        self.is_archerstand = False
 
         self.images = {
             0: pygame.image.load('s_campfire_unlit-0.png'),
