@@ -352,6 +352,13 @@ class World():
             if not (self.structures.hub.x - 256 <= i.x <= self.structures.hub.x + 256)
         ]
 
+        # kill trees in radius of camps
+        for structure in self.structures.structure_list:
+            if structure.is_camp is True:
+                for tree in self.ground.combination_foliage:
+                    if tree.x >= structure.x-64 and tree.x <= structure.x+64:
+                        self.ground.combination_foliage.remove(tree)
+
         # generating wall mounds in the map, every 16 tiles
         for i in range(0,self.worldsize*tile_size[0],16*tile_size[0]):
             if i < self.structures.hub.x:
@@ -363,7 +370,7 @@ class World():
                     self.wall_example = Structures.Wall(i,16,"right")
                     self.structures.structure_list.add(self.wall_example)
         else:
-            print("[WORLD] O- Walls generated ...")
+            print("[STRUCTURES] O- Walls generated ...")
 
         self.camera = Camera(window_size[0] // res_downscale, window_size[1] // res_downscale)
 
@@ -415,13 +422,16 @@ class World():
         self.background.weather_layer_5.update()
         self.background.weather_layer_6.update()
         for i in self.ground.combination_foliage[:]:
+            if i.hp <= 0:
+                self.ground.combination_foliage.remove(i)
             i.parts.update()
+            i.check(self.player)
         self.ground.foliage.update()
 
         self.entity_list.update()
         self.ground.terrain.update()
         self.ground.under_terrain.update() # < very useless, bunch of sprites for no reason
-        self.structures.update_check(self.player)
+        self.structures.update_check(self.player, self.ground.combination_foliage)
         self.structures.structure_list.update()
 
         for i in self.background.weather_layer_4:
@@ -560,6 +570,11 @@ class World():
                 self.TASK_QUEUE.append(building_project)
                 building_project.queued = True
 
+        for tree in self.ground.combination_foliage:
+            if tree.scheduled_felling == True and tree.queued == False:
+                self.TASK_QUEUE.append(tree)
+                tree.queued = True
+
         # Assigning workers to tasks if there are any
         if self.TASK_QUEUE:
             print("O- TASKS IN QUEUE ...")
@@ -598,6 +613,9 @@ class World():
             for building_project in self.structures.structure_list:
                 if worker.assigned_task_id == building_project.assigned_task_id:
                     x += 1
+            for tree in self.ground.combination_foliage:
+                if worker.assigned_task_id == tree.assigned_task_id:
+                    x += 1
             if x == 0:
                 worker.assigned_task_id = 0
                 worker.assigned_task = None
@@ -610,7 +628,15 @@ class World():
                     if building_project.queued:
                         if building_project.assigned_task_id is worker.assigned_task_id:
                             building_project.build()
+
+        for tree in self.ground.combination_foliage:
+            for worker in self.WORKER_LIST:
+                if worker.x >= tree.x-16 and worker.x <= tree.x+16:
+                    if tree.queued:
+                        if tree.assigned_task_id is worker.assigned_task_id:
+                            tree.cut()
         # --- #
+    
 
 class Ground():
     def __init__(self, x, y, length):
@@ -624,8 +650,7 @@ class Ground():
         self.combination_foliage = []
 
     def generate(self):
-        i=0
-        while i < self.length:
+        for i in range(self.length):
             indx = random.randrange(-1,2)
             tile        = Tile(tile_size[0]*i,self.y,random.randrange(1,3))
             under_tile  = Tile(tile_size[0]*i,(self.y-tile_size[1]*4)+random.randrange(0,5),random.randrange(3,5))
@@ -639,7 +664,6 @@ class Ground():
             self.terrain.add        (tile)
             self.under_terrain.add  (under_tile)
             self.foliage.add        (grass_tuft)
-            i=i+1
 
 
 class Background():
@@ -749,12 +773,35 @@ class Foliage():
             self.x = x
             self.y = y
             self.parts = pygame.sprite.Group()
+            self.scheduled_felling = False
+            self.heldcounter = 60
+            self.id = random.randrange(1000,10000)
+            self.hp = 1000
+            self.assigned_task_id = 0
+            self.queued = False
 
             self.trunk = Foliage.TreeTrunk1(self.x,self.y)
             self.leaves = Foliage.TreeLeaves1(self.x-24,self.y+64)
 
             self.parts.add(self.trunk)
             self.parts.add(self.leaves)
+
+        def check(self, target):
+            keys = pygame.key.get_pressed()
+
+            if self.x >= target.x-16 and self.x <= target.x+16:
+                if keys[pygame.K_DOWN]:
+                    self.heldcounter -= 1
+
+                    if self.heldcounter <= 0:
+                        if self.scheduled_felling == False:
+                            self.scheduled_felling = True
+                            print("Scheduled a felling...")
+                else:
+                    self.heldcounter = 60
+        
+        def cut(self):
+            self.hp -= 1
 
     class Grass1(pygame.sprite.Sprite):
         def __init__(self, x, y):
@@ -768,17 +815,9 @@ class Foliage():
 
             images = []
             self.images = ss.load_strip((0,0,16,16), 6)
+            self.flipped_images = [pygame.transform.flip(img, False, True) for img in self.images]
 
-            self.image = pygame.transform.flip(self.images[self.index], False, True)
-
-            # self.images = {
-            #     0: pygame.image.load('s_grass_01-0.png'),
-            #     1: pygame.image.load('s_grass_01-1.png'),
-            #     2: pygame.image.load('s_grass_01-2.png'),
-            #     3: pygame.image.load('s_grass_01-3.png'),
-            #     4: pygame.image.load('s_grass_01-4.png'),
-            #     5: pygame.image.load('s_grass_01-5.png')
-            # }
+            self.image = self.flipped_images[self.index]
 
             self.rect = self.image.get_rect()
             self.rect.x = x
@@ -788,45 +827,10 @@ class Foliage():
             self.rect.x = self.x
             self.rect.y = self.y
 
-            self.image = pygame.transform.flip(self.images[self.index], False, True)
-
-            if self.superdex == 30:
+            if self.superdex == 60:
                 self.superdex = 0
-                if self.index == 5:
-                    self.index = 0
-                else:
-                    self.index += 1
-            else:
-                self.superdex += 1
-
-    class Grass2(pygame.sprite.Sprite):
-        def __init__(self, x, y):
-            pygame.sprite.Sprite.__init__(self)
-            self.x = x
-            self.y = y
-            self.index = 0
-            self.superdex=0
-
-            self.image = pygame.image.load('s_grass_02-0.png')
-            self.image = pygame.transform.flip(self.image,False,True)
-
-            self.rect = self.image.get_rect()
-            self.rect.x = x
-            self.rect.y = y
-
-        def update(self):
-            self.rect.x = self.x
-            self.rect.y = self.y
-
-            self.image = pygame.image.load('s_grass_02-'+str(self.index)+'.png')
-            self.image = pygame.transform.flip(self.image,False,True)
-
-            if self.superdex == 30:
-                self.superdex = 0
-                if self.index == 5:
-                    self.index = 0
-                else:
-                    self.index += 1
+                self.index = (self.index + 1) % 6
+                self.image = self.flipped_images[self.index]
             else:
                 self.superdex += 1
 
@@ -835,24 +839,15 @@ class Foliage():
             pygame.sprite.Sprite.__init__(self)
             self.x = x
             self.y = y
-            self.index = 0 + random.randrange(1,5)
-            self.superdex=0
+            self.index = random.randrange(1, 5)
+            self.superdex = 0
 
             ss = spritesheet.SpriteSheet('s_tree_leaves_01-spritesheet.png')
 
-            images = []
-            self.images = ss.load_strip((0,0,64,64), 6)
+            self.images = ss.load_strip((0, 0, 64, 64), 6)
+            self.flipped_images = [pygame.transform.flip(img, False, True) for img in self.images]
 
-            self.image = pygame.transform.flip(self.images[self.index], False, True)
-
-            # self.images = {
-            #     0: pygame.image.load('s_tree_leaves_01-0.png'),
-            #     1: pygame.image.load('s_tree_leaves_01-1.png'),
-            #     2: pygame.image.load('s_tree_leaves_01-2.png'),
-            #     3: pygame.image.load('s_tree_leaves_01-3.png'),
-            #     4: pygame.image.load('s_tree_leaves_01-4.png'),
-            #     5: pygame.image.load('s_tree_leaves_01-5.png')
-            # }
+            self.image = self.flipped_images[self.index]
 
             self.rect = self.image.get_rect()
             self.rect.x = x
@@ -862,14 +857,10 @@ class Foliage():
             self.rect.x = self.x
             self.rect.y = self.y
 
-            self.image = pygame.transform.flip(self.images[self.index], False, True)
-
             if self.superdex == 60:
                 self.superdex = 0
-                if self.index == 5:
-                    self.index = 0
-                else:
-                    self.index += 1
+                self.index = (self.index + 1) % 6
+                self.image = self.flipped_images[self.index]
             else:
                 self.superdex += 1
 
@@ -947,9 +938,12 @@ class Structures():
 
         print("Location of campfire: "+str(128*tile_size[0]//2))
 
-    def update_check(self, input_target):
+    def update_check(self, input_target, tree_list):
         for i in self.structure_list:
-            i.check(input_target)
+            if i.is_wall:
+                i.check(input_target, tree_list)
+            else:
+                i.check(input_target)
 
     class Wall(pygame.sprite.Sprite):
         def __init__(self, x, y, left_or_right):
@@ -1002,7 +996,7 @@ class Structures():
             
                 print("Building ...")
 
-        def check(self, target):
+        def check(self, target, tree_list):
             keys = pygame.key.get_pressed()
             
             if self.left_or_right == "left":
@@ -1014,19 +1008,23 @@ class Structures():
                 pygame.draw.rect(self.image,(255,255,255),(0,0,32,64),width=1)
 
             if self.x >= target.x-16 and self.x <= target.x+16:
-                self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
+                x = 0
+                for tree in tree_list:
+                    if tree.x >= self.x-64 and tree.x <= self.x+64:
+                        x+=1
+                
+                if not x > 0:
+                    self.image.fill((10,10,10,0),special_flags=pygame.BLEND_RGB_ADD)
 
-                if keys[pygame.K_DOWN]:
-                    self.heldcounter -= 1
+                    if keys[pygame.K_DOWN]:
+                        self.heldcounter -= 1
 
-                    if self.heldcounter <= 0:
-                        self.target_progress += 1
+                        if self.heldcounter <= 0:
+                            self.target_progress += 1
+                            self.heldcounter = 60
+
+                    else:
                         self.heldcounter = 60
-
-                        print("Upgraded wall "+str(self.x)+" "+str(self.y))
-
-                else:
-                    self.heldcounter = 60
 
     class Builder_stand(pygame.sprite.Sprite):
         def __init__(self, x, y, left_or_right):
